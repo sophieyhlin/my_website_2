@@ -1,0 +1,221 @@
+---
+title: "Project 1: Return on Financial Stocks Analysis Practice"
+author: "#"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    theme: flatly
+    highlight: zenburn
+    number_sections: yes
+    toc: yes
+    toc_float: yes
+    code_folding: show
+---
+
+
+```{r, setup, echo=FALSE}
+knitr::opts_chunk$set(
+  message = FALSE, 
+  warning = FALSE, 
+  tidy=FALSE,     # display code as typed
+  size="small")   # slightly smaller font for code
+options(digits = 3)
+
+# default figure size
+knitr::opts_chunk$set(
+  fig.width=6.75, 
+  fig.height=6.75,
+  fig.align = "center"
+)
+```
+
+
+```{r load-libraries, warning=FALSE, message=FALSE, echo=FALSE}
+library(tidyverse)  # Load ggplot2, dplyr, and all the other tidyverse packages
+library(mosaic)
+library(ggthemes)
+library(lubridate)
+library(fivethirtyeight)
+library(here)
+library(skimr)
+library(janitor)
+library(tidytext)
+library(vroom)
+library(tidyquant)
+library(rvest)    # scrape websites
+library(purrr)  
+library(zipcodeR)
+library(lubridate) #to handle dates
+```
+
+# Returns of financial stocks
+
+
+> You may find useful the material on [finance data sources](https://mfa2021.netlify.app/reference/finance_data/). 
+
+
+We must first identify which stocks we want to download data for, and for this we must know their ticker symbol; Apple is known as AAPL, Microsoft as MSFT, McDonald's as MCD, etc. The file `nyse.csv` contains 508 stocks listed on the NYSE, their ticker `symbol`, `name`, the IPO  (Initial Public Offering) year, and the sector and industry the company is in.
+
+
+```{r load_nyse_data, message=FALSE, warning=FALSE}
+nyse <- read_csv(here::here("data", "nyse.csv"))
+```
+
+Based on this dataset, create a table and a bar plot that shows the number of companies per sector, in descending order
+
+```{r, companies_per_sector_1}
+
+grouped_nyse <- group_by(nyse, sector)
+summarised_nyse <- summarize(grouped_nyse, count = n())
+plot <- ggplot(data=summarised_nyse, mapping = aes(x = reorder(sector, -count), y = count)) + geom_bar(stat="identity")  + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+print(plot)
+```
+```{r, companies_per_sector_2}
+plot <- ggplot(data=summarised_nyse, mapping = aes(x = reorder(sector, -count), y = count)) + geom_bar(stat="identity")  + 
+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+labs(title = "NYSE Companies by sector ", subtitle = "The graph plots the 509 stock listed companies in the NYSE across 12 industry sectors",
+x = "Industry", 
+y = "Companies Amount" )
+print(plot)
+```
+
+
+Next, let's choose the [Dow Jones Industrial Aveareg (DJIA)](https://en.wikipedia.org/wiki/Dow_Jones_Industrial_Average) stocks and their ticker symbols and download some data. Besides the thirty stocks that make up the DJIA, we will also add `SPY` which is an SP500 ETF (Exchange Traded Fund).
+
+
+```{r, tickers_from_wikipedia}
+
+djia_url <- "https://en.wikipedia.org/wiki/Dow_Jones_Industrial_Average"
+
+#get tables that exist on URL
+tables <- djia_url %>% 
+  read_html() %>% 
+  html_nodes(css="table")
+
+
+# parse HTML tables into a dataframe called djia. 
+# Use purr::map() to create a list of all tables in URL
+djia <- map(tables, . %>% 
+               html_table(fill=TRUE)%>% 
+               clean_names())
+
+
+# constituents
+table1 <- djia[[2]] %>% # the second table on the page contains the ticker symbols
+  mutate(date_added = ymd(date_added),
+         
+         # if a stock is listed on NYSE, its symbol is, e.g., NYSE: MMM
+         # We will get prices from yahoo finance which requires just the ticker
+         
+         # if symbol contains "NYSE*", the * being a wildcard
+         # then we jsut drop the first 6 characters in that string
+         ticker = ifelse(str_detect(symbol, "NYSE*"),
+                          str_sub(symbol,7,11),
+                          symbol)
+         )
+
+# we need a vector of strings with just the 30 tickers + SPY
+tickers <- table1 %>% 
+  select(ticker) %>% 
+  pull() %>% # pull() gets them as a sting of characters
+  c("SPY") # and lets us add SPY, the SP500 ETF
+
+```
+
+```{r get_price_data, message=FALSE, warning=FALSE, cache=TRUE}
+# Notice the cache=TRUE argument in the chunk options. Because getting data is time consuming, # cache=TRUE means that once it downloads data, the chunk will not run again next time you knit your Rmd
+
+myStocks <- tickers %>% 
+  tq_get(get  = "stock.prices",
+         from = "2000-01-01",
+         to   = "2020-08-31") %>%
+  group_by(symbol) 
+
+glimpse(myStocks) # examine the structure of the resulting data frame
+```
+
+Financial performance analysis depend on returns; If I buy a stock today for 100 and I sell it tomorrow for 101.75, my one-day return, assuming no transaction costs, is 1.75%. So given the adjusted closing prices, our first step is to calculate daily and monthly returns.
+
+
+```{r calculate_returns, message=FALSE, warning=FALSE, cache=TRUE}
+#calculate daily returns
+myStocks_returns_daily <- myStocks %>%
+  tq_transmute(select     = adjusted, 
+               mutate_fun = periodReturn, 
+               period     = "daily", 
+               type       = "log",
+               col_rename = "daily_returns",
+               cols = c(nested.col))  
+
+#calculate monthly  returns
+myStocks_returns_monthly <- myStocks %>%
+  tq_transmute(select     = adjusted, 
+               mutate_fun = periodReturn, 
+               period     = "monthly", 
+               type       = "arithmetic",
+               col_rename = "monthly_returns",
+               cols = c(nested.col)) 
+
+#calculate yearly returns
+myStocks_returns_annual <- myStocks %>%
+  group_by(symbol) %>%
+  tq_transmute(select     = adjusted, 
+               mutate_fun = periodReturn, 
+               period     = "yearly", 
+               type       = "arithmetic",
+               col_rename = "yearly_returns",
+               cols = c(nested.col))
+```
+
+Create a dataframe and assign it to a new object, where you summarise monthly returns since 2017-01-01 for each of the stocks and `SPY`; min, max, median, mean, SD.
+
+```{r summarise_monthly_returns}
+
+monthlyStocks_plot <- myStocks_returns_monthly %>% 
+  filter(date >= "2017-01-01") %>%
+mutate(mean_monthly = mean(monthly_returns),
+            minimum_monthly = min(monthly_returns),
+            maximum_monthly = max(monthly_returns),
+            median_monthly = median(monthly_returns),
+            sd_monthly = sd(monthly_returns)) %>% 
+  mutate(symbol = str_replace(symbol, "CS", "Credit Suisse Group")) %>% 
+  mutate(symbol = str_replace(symbol, "DOW", "Dow Inc.")) %>% 
+  mutate(symbol = str_replace(symbol, "FDS", "FactSet Research Systems Inc.")) %>% 
+  mutate(symbol = str_replace(symbol, "GE", "General Electric Company")) %>% 
+  mutate(symbol = str_replace(symbol, "NVS", "Novartis AG")) %>% 
+  mutate(symbol = str_replace(symbol, "RACE", "Ferrari N.V.")) %>% 
+  mutate(symbol = str_replace(symbol, "SPY", "SP500 ETF")) %>% 
+  rename(name = symbol)
+
+```
+
+
+Plot a density plot, using `geom_density()`, for each of the stocks
+```{r density_monthly_returns}
+
+ggplot(myStocks_returns_monthly, aes(x = monthly_returns, color = symbol))+
+  geom_density()+
+  labs(title = "Density of the monthly stock returns")+
+  xlab("Monthly returns")+
+  ylab("Density")+
+  theme_bw()
+
+```
+
+> In general, the density chart showsthe distribution of how the stock has performed in the past. According to the chart above, we can assume that PG is less riskier than other stock as it has the highest density amongest all others whilst stocks like Dow, APPL and INTC with serveral curves in their curves with wide tail across negative and positive returns in the same month. 
+
+
+```{r risk_return_plot}
+
+ggplot(monthlyStocks_plot, aes(x = sd_monthly, y = mean_monthly, color = name))+
+  geom_point()+
+  labs(title = "Return vs. standard deviation chart", subtitle = "The graph plots the companies according to their risk/return profile")+
+  xlab("Monthly standard deviation")+
+  ylab("Monthly returns")+
+  theme_bw()
+
+```
+
+
+> The standard deviation plot shows the relationship betwen the stocks return and its risk profile, with less riskier assets on the left and riskier assets on the right. Consequently, it helps us to understand not just about the return of each stock but each of its own risk implied. According to the plot, Dow doesn't have a higher expected return whilst being significantly riskier than other stocks. With a monthy standard deviation more than 0.12, Dow has a less than 0.01 return only.  
+

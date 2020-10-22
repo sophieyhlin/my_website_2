@@ -1,0 +1,857 @@
+---
+title: 'Group Project: Data Analytics of AirBnB Prices - Stockholm'
+author: "Study Group 6"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    theme: cerulean
+    highlight: null
+    toc: yes
+    toc_float: yes
+  word_document:
+    toc: yes
+---
+# Executive Summary
+
+## Overview of the Task
+
+We were tasked to do an exploratory data analysis (EDA) of the Stockholm Airbnb data and thereafter do a regression on the data. 
+Firstly, we cleaned the dataset by converting certain variables such as prices to numerical variables, following that we identified certain columns within the dataset which had NAs and converted that to 0. An example would be for cleaning fee, if there was an NA we converted those NAs to 0 which implies that for there is no cleaning fee.
+
+Following the cleaning of the data we identified the top 4 property types (Apartment, House, Townhouse, Loft)  and determine the most common minimum nights (filtered for <= 4) which we will later be used in our regression analysis.
+
+For our EDA we summarized the data leveraging on ggplot and ggpairs which can be seen in the HTML file. We also plotted a map of the Airbnb locations in Stockholm.
+
+We also did several regression analyses to find the best model for the price of staying at an accommodation for 4 nights. We use various variables such as bed, bathrooms, bathrooms, cancellation policy and superhost. We used natural log on our models to improve it. We checked if the variables were significant by ensuring that the t value was larger than 2 and checked that there was no collinearity by ensuring that VIF is smaller than 10.
+
+## Process of Analysis
+
+When building the models, we started with variables that we believed were strongly correlated with price. We then continually added variables onto the model and checked for statistical significance, collinearity, and distribution of residuals. 
+
+After testing multiple models, we determined the final model was a strong model as all the predictors were statistically significant, the model did not suffer from collinearity, and the adjusted r-squared was approximately 45%, which was the strongest of the models we tested. Additionally, looking at the residuals, we determined that they were normally distributed in a random pattern with the mean of zero. There were no points of leverage in the final model, and the model did not suffer from heteroscedasticity.
+
+We decided to finalise our study on the last model tested as additional predictors did not increase adjusted r-squared by a practically significant amount. We desired to maintain as simple a model as possible rather than adding further predictors, leading to an overfit model that predicts poorly on new data.
+
+```{r huxtable-stuff, include=FALSE, warning=FALSE}
+library(vroom)
+library(lubridate)
+library(here)
+library(moderndive)
+library(tidyverse)
+library(ggfortify)
+library(infer)
+library(mosaic)
+library(huxtable)
+library(kableExtra)
+library(tidyquant)
+library(readxl) #need to load readxl explicitly, as it is not a core tidyverse 
+library(GGally)
+library(broom)
+library(ggfortify)
+library(broom)
+library(leaflet)
+library(skimr)
+library(scales) #need for dollars label in ggplot
+library(car)
+library(huxtable)
+library(leaflet.providers)
+library(gapminder)
+library(ggplot2)
+library(devtools)
+library(kableExtra)
+library(sjPlot)
+library(sjmisc)
+library(sjlabelled)
+library(pander)
+library(xtable)
+library(lmtest)
+options("huxtable.knit_print_df" = FALSE)
+listings <- vroom("http://data.insideairbnb.com/sweden/stockholms-l%C3%A4n/stockholm/2020-06-26/data/listings.csv.gz")
+```
+# 1 Exploratory Data Analysis
+
+## 1.1 Viewing the Raw Data
+```{r listing_data, eval=TRUE, warning=FALSE}
+
+glimpse(listings) # examine the raw dataframe
+
+```
+## 1.2 Initial Findings
+
+The raw dataset includes 106 variables, 7,635 listings/observations. The data is made up of numerical, factors, and character variables. 
+
+* Some numerical variables are "price", "review scores", "bedrooms", "bathrooms", "square feet", and "id" (should be a character).
+* Some categorical and factor variables are "is business travel ready", "instant bookable", "availability", and "property type".
+
+After our initial review, we have determined that we need to adjust some of the variables to be stored as other types (e.g. price, cleaning fee, etc. should be numerical variables). 
+
+## 1.3 Data Wrangling
+
+First we mutate the variables to the desired class in order to complete our analysis.
+
+```{r covert_to_numbers, eval=TRUE, warning=FALSE}
+
+listings <- listings %>% 
+  extract(price, "price") %>% #remove dollar signs from price
+  mutate(price = as.numeric(price)) #mutate to numerical values
+typeof(listings$price) #check that price is store as numerical value
+
+listings <- listings %>% 
+  extract(cleaning_fee, "cleaning_fee") %>%
+  mutate(cleaning_fee = as.numeric(cleaning_fee))
+typeof(listings$cleaning_fee)
+
+listings <- listings %>% 
+  extract(extra_people, "extra_people") %>%
+  mutate(extra_people = as.numeric(extra_people))
+typeof(listings$extra_people)
+
+listings <- listings %>% 
+  extract(weekly_price, "weekly_price") %>%
+  mutate(weekly_price = as.numeric(weekly_price))
+typeof(listings$weekly_price)
+
+listings <- listings %>% 
+  extract(monthly_price, "monthly_price") %>%
+  mutate(monthly_price = as.numeric(monthly_price))
+typeof(listings$monthly_price)
+
+listings <- listings %>% 
+  extract(security_deposit, "security_deposit") %>%
+  mutate(security_deposit = as.numeric(security_deposit))
+typeof(listings$security_deposit)
+
+listings <- listings %>% 
+  extract(square_feet, "square_feet") %>%
+  mutate(square_feet = as.numeric(square_feet))
+typeof(listings$square_feet)
+
+```
+
+## 1.4 Handling Missing NAs
+
+Next, we will search for values where the variable has a missing value and is recorded as "N/A." 
+
+```{r cleaning_fee_NAs, eval=TRUE, warning=FALSE}
+
+skim(listings$cleaning_fee) #used to determine the number of missing values for cleaning fee
+
+skim(listings$security_deposit) 
+
+skim(listings$square_feet)
+
+skim(listings$price)
+
+```
+
+
+There are 3,122 missing values for cleaning fees. For values where cleaning fees is "N/A" likely means that there is not a cleaning fee (cleaning fee equals $0). Making this assumption, we replace the "N/A" values with a value of $0.
+
+Furthermore, there are 4,110 missing values for security deposit. For values where security deposit is "N/A" likely means that there is not a security deposit (security deposit equals $0). Making this assumption, we replace the "N/A" values with a value of $0.
+
+Moreover, square feet has 7,553 missing values (~99% of total observations). Therefore, square feet should not be used as a predictor in our analysis.
+
+Lastly, we skimmed for price and noticed that there are no missing values. 
+
+```{r handling_NAs, eval=TRUE, warning=FALSE}
+
+#Replace NAs with zeros
+listings <- listings %>%
+  mutate(cleaning_fee = case_when(
+    is.na(cleaning_fee) ~ 0, #store N/As as zero
+    TRUE ~ cleaning_fee
+  ))
+
+listings <- listings %>%
+  mutate(security_deposit = case_when(
+    is.na(monthly_price) ~ 0, 
+    TRUE ~ monthly_price
+  ))
+
+```
+
+## 1.5 Property Types
+
+Next, we will look at the variable "property type". We seek to determine the most common property types in the data.
+
+```{r property_type, eval=TRUE, warning=FALSE, message=FALSE}
+top4_property_types <- listings %>% 
+  count(property_type) %>%  #count the values of each property type
+  arrange(desc(n)) %>%  #arrange in a list in descending order
+  top_n(4) #select only the top 4
+
+sum(top4_property_types$n)/count(listings) 
+
+listings <- listings %>%
+  mutate(prop_type_simplified = case_when(
+    property_type %in% c("Apartment","House", "Townhouse","Loft") ~ property_type,
+    TRUE ~ "Other"
+  )) #Make a new variable named prop_type_symplified and make value either Apartment, House, Townhouse, Loft, or Other based on the value in property_type
+
+listings %>%
+  count(property_type, prop_type_simplified) %>% #count the values of each property type and simplified property type 
+  arrange(desc(n)) %>% #arrange in a list in descending order
+  kable() %>%  #table type in HTML
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "left") #create a table
+
+```
+The top four property types are apartment, house, townhouse, and loft. These top four represent 92.56% of the total listings. Because the property types are highly concentrated into the top four, we will classify the rest as "other".
+
+## 1.6 Minimum Nights
+We seek to determine the most common minimum nights required in the data.
+
+```{r minimum_nights, eval=TRUE}
+
+listings %>%
+  count(minimum_nights) %>% #count the number by each minimum nights
+  arrange(desc(n)) %>% #arrange the list in descending order
+  kable() %>%  #table type in HTML
+  kable_styling(bootstrap_options = "striped", full_width = F, position = "left") #create a table
+
+listings <- listings %>%
+  filter(minimum_nights <= 4) #filter for minimum nights that are 4 or less
+
+```
+
+The four most common minimum nights of stay required are 1 - 4 nights. The fifth to seventh most common minimum nights required are 5 - 7 nights. What stands out in the data is that 8 nights are only the eighteenth most common minimum nights required with 60 and 90 nights being more common. The most likely intended purpose of these listings is for mid- and long-term renting, which is not in line with our desired analysis as we desire to focus on listings marketed to travelers.
+
+## 1.7 Summary of Data
+```{r EDA_conclusion, warning=FALSE}
+fav_stats(listings$price) %>% 
+  kable() %>%  #table type in HTML
+  kable_styling(full_width = F, position = "left") #create a table
+
+ggplot(data = listings, aes(x = price)) + #@ggplot
+  geom_density() + #plotting density graph
+  xlab("Price per Night") + #labelling x-axis
+  ylab("") + #no labels for y-axis
+  ggtitle("Price Density Plot") + #title of the graph
+  scale_x_continuous(labels = dollar) + #adding $ sign to values on x-axis
+  theme_bw() #black and white theme of the graph
+
+fav_stats(listings$accommodates) %>% 
+  kable() %>%  #table type in HTML
+  kable_styling(full_width = F, position = "left") #create a table
+
+ggplot(data = listings, aes(x = accommodates, y = price)) + #@ggplot
+  geom_jitter(alpha = 0.15) + #add jitter and transparency to see overlapping observations
+  geom_smooth(method = lm) + #add line of best fit
+  ylab(NULL) + #no labels for y-axis
+  xlab("Number of Accommodates") + #labelling x-axis
+  scale_y_continuous(labels = dollar) + #adding $ sign to values on y-axis
+  ggtitle("Price vs Number of Accomodates") + #title of the graph
+  theme_bw() #black and white theme of the graph
+
+ggplot(data = listings, aes(x = prop_type_simplified, fill = prop_type_simplified)) + #@ggplot
+  geom_bar() + # plotting a bar graph
+  scale_x_discrete(name = "", limits = c("Apartment", "House", "Townhouse", "Loft", "Hotel"))  + #names of x- variables
+  xlab(NULL) + #no labels for x-axis
+  ylab(NULL) + #no labels for y-axis
+  ggtitle("Listing Property Types") + #title of the graph
+  theme_bw() + #black and white theme of the graph
+  theme(legend.position = "") + #remove legend
+  scale_y_continuous(labels = comma) #adding , to values on y-axis
+
+fav_stats(listings$review_scores_rating) %>% 
+  kable() %>%  #table type in HTML
+  kable_styling(full_width = F, position = "left") #create a table
+
+ggplot(data = listings, aes(x = review_scores_rating, y = price)) +
+  geom_point(alpha = 0.05) + #add transparency to see overlapping observations
+  geom_smooth(method = lm) + #add line of best fit
+  ylab(NULL) + #no label on y-axis
+  xlab("Review Score") + #labelling x-axis
+  ggtitle("Price vs Review Score") + #title of the graph
+  scale_y_continuous(labels = dollar) + #adding $ sign to values on x-axis
+  theme_bw() #black and white theme of the graph
+
+ggpairs(listings[,c("accommodates", "bedrooms", "bathrooms", "price")],
+        title = "Pairwise correlations of size-related variables and price") #calculating correlation between key variables
+
+ggpairs(listings[,c("review_scores_rating", "review_scores_cleanliness", "review_scores_location", "number_of_reviews", "price")], 
+        title = "Pairwise correlations of review scores and price") #calculating correlation between key variables
+
+```
+
+The mean price in the data is $415.03 per night. Price is not normally distributed, therefore we will need to adjust for this when completing our regression analysis in order to make accurate predictions.
+
+Some other variables of interest include accomodates, which has a median of 3 people. In our initial review, we expect price to increase as accomodates increases. 
+
+The median review score received by the Airbnb is 98. The data is skewed towards low ratings. Based on initial review, we expect price to increase for Airbnbs with high review scores, but the correlation is low, and may not be significant. 
+
+Seeking to learn about the correlation between variables, we looked at variables we believed would be correlated such as accomadates, bedrooms, and bathrooms. Out of the sample we tested, bedrooms and accommodates have the strongest correlation of 75.2%, which is expected as more bedrooms means the Airbnb will be able to accommodate more guests. 
+
+# 2 Mapping
+
+Here, we will look at a map of the Airbnb and their location across Stockholm. 
+
+```{r Mapping, eval=TRUE, warning=FALSE}
+
+pal <- colorFactor(c("blue", "red", "purple", "green", "black"), c("Apartment", "House", "Townhouse", "Loft", "Other")) #create dataset for points in map
+
+leaflet(data = filter(listings, minimum_nights <= 4)) %>% #create map
+  addProviderTiles("Esri.WorldStreetMap") %>% #add maptype
+  addCircleMarkers(lng = ~longitude, 
+                   lat = ~latitude, 
+                   radius = 1, 
+                   color = ~pal(prop_type_simplified),
+                   fillOpacity = 0.4, 
+                   popup = ~listing_url,
+                   label = ~property_type) %>% 
+  addLegend("bottomright", pal = pal, values = ~prop_type_simplified,
+    title = "Property type",
+    opacity = 1
+  ) #definitions of the map
+
+```
+
+Viewing the map of the Airbnb listing, there are more listings located towards the city center. Furthermore, there is a concentration of apartments in and around the city center. Meanwhile, outside of the city center the different property types are spread more equally.
+
+# 3 Regression Analyses
+
+By using regression, we will determine the price of two individuals for four nights in an Stockholm area Airbnb. 
+
+First, we will create a variable named "price_4_nights" which is calculated as the the price of 4 nights with the cost of any fees for extra guest and any cleaning fees required.
+
+We assumed cleaning fee was a one time expense, as it usually occurs after the temporary occupant moves out of the property. Therefore, cleaning is a flat fee.
+
+## 3.1 Price for Four Nights
+
+```{r price_4_nights, eval=TRUE, warning=FALSE, message=FALSE}
+
+listings_for2 <- listings %>% #create a new dataset
+  filter(price != 0) %>% #filter that price is not 0
+  mutate(price_4_nights = cleaning_fee + 4 * (price + (extra_people * max(0, 2 - guests_included))))  #make a new column with price for 4 nights
+
+#max function used to calculate whether or not a fee would be charged. If there are less than 2 guest included, then a fee would occur, and if not, there will not be a fee.
+
+ggplot(listings_for2, aes(x= price_4_nights)) + #@ggplot
+  geom_histogram() +  #type = scatterplot
+  theme_bw() +  #change to theme_bw() to have white background + black frame around plot
+  labs(x = NULL, y = NULL, title = "Histogram of the Price for Four Nights") +  #delete x and y labs, add title
+  scale_x_continuous(labels = dollar) + #label of x axis is $
+  scale_y_continuous(labels = comma) +  #label of y axis has a comma after thousand
+  stat_bin(binwidth = 80) #width of the bars in histogram = 80
+
+ggplot(listings_for2, aes(x= price_4_nights)) + #@ggplot
+  geom_density() +  #type = densityplot
+   theme_bw() + #change to theme_bw() to have white background + black frame around plot
+  labs(x = NULL, y = NULL, title = "Density Plot of the Price for Four Nights") +  #delete x and y labs, add title
+  scale_x_continuous(labels = dollar) #label of x axis is $
+
+```
+
+Looking at this histogram or the Price for Four Nights variable, we determine the data is skewed to the right. In order to improve the distribution, we will take the log of the variable. 
+
+## 3.2 Log of Price for Four Nights
+```{r log_price_4_nights, eval=TRUE, warning=FALSE, message=FALSE}
+
+listings_for2_log <- listings_for2 %>%  #create a new dataset
+  mutate(log_price_4_nights = log(price_4_nights))  #mutate price for 4 nights to a log price
+
+ggplot(listings_for2_log, aes(x=log_price_4_nights)) +  #@ggplot
+  geom_histogram() +  #type = histogram
+  theme_bw() +  #change to theme_bw() to have white background + black frame around plot
+  labs(x = NULL, y = NULL, title = "Histogram of Log of the Price for Four Nights")  #delete x and y labs, add title
+
+ggplot(listings_for2_log, aes(x= log_price_4_nights)) +  #@ggplot
+  geom_density() +  #type = densityplot
+  theme_bw() +  #change to theme_bw() to have white background + black frame around plot
+  labs(x = NULL, y = NULL, title =  "Distribution of the Log of the Price for Four Nights")  #delete x and y labs, add title
+
+```
+
+The log of the Price for Four Nights is less normally distributed than the unlogged price. Therefore, we will not the log in order to predict price when completing our regression analysis.
+
+## 3.3 Performing Regression Analyses
+
+Now we try to find the best regression model to predict the log of the price of a four night stay for two guests.
+
+### 3.3.1 Regression Analysis 1
+#### Property Type, Number of Reviews, and Review Score
+
+We will now determine whether the price of a four night stay with two guests is explained by the property type simplified ("prop_type_simplified"), the number of reviews ("number_of_reviews"), and the overall review score ("review_scores_rating").
+
+```{r model1, eval=TRUE, warning=FALSE}
+
+model1 <- lm(price_4_nights ~ prop_type_simplified + number_of_reviews + review_scores_rating,
+             data = listings_for2)  #make regression on these variable and call model 1
+summary(model1)
+
+par(mfrow=c(2,2)) # Change the panel layout to 2 x 2
+plot(model1)
+
+bptest(model1) #test for heteroskedasticity using the Breusch-Pagan test
+
+```
+
+The resulting equation of the regression model is the following:
+$$
+price_4_nights = 3092 - 876 * prop_type_simplifiedHouse - 608 * prop_type_simplifiedLoft
+- 138 * prop_type_simplifiedOther - 516 * prop_type_simplifiedTownhouse + 2 * number_of_reviews
+- 9 * review_scores_rating
+$$
+The regression model used above determined that all but prop_type_simplifiedOther are statistically significant predictors of the price for 4 nights (indeed to a different significance level). 
+THe high F- statistics signals that this model fits the data better than the intercept-only model. Nonetheless, the $R_{adjusted}^2$ is 2.3%, meaning that the model explains only 2.3% of the variation of the price for 4 nights for 2 people.
+
+The first plot depicts residuals versus fitted values. The plot of residuals versus fitted values is useful for checking the assumption of linearity and homoscedasticity. If the model does not meet the linear model assumption, we residuals would take on a defined shape or a distinctive pattern. Looking a the plot of the residuals, it looks like our residulas are homoscedastic, and the assumption of linearity seems satisfied as well. Indee, to be more precise in assessing whether the data are evenly spread across y=0, we conducted a numerical test to understand whether heteroschedasticity is present or not. The Breusch-Pagan test revels that at 5% significance level, the data appears not to be heteroschedastics. Therefore, we will not proceed with the correction of standard errors.
+
+The normality assumption is evaluated based on the residuals and can be evaluated using a QQ-plot by comparing the residuals to “ideal” normal observations along the 45-degree line. In our case, it seems that observations lie pretty much along the 45 degree line, so we might assume that normality holds here.
+
+Looking at the residuals vs leverage graph, we can see there is the presence of influential outliers.These outliers could alter the results, depending on whether they are included or excluded from the analysis. We look closely at this result with the plot "influential OBS by Cook distance" and we asssess that it might be necessary to remove some obervations. We proceed with removing the observations and we run the regression again to look at the results and assess whether they improved.
+
+
+```{r model1_1, eval=TRUE, warning=FALSE}
+
+cooksd <- cooks.distance(model1)
+sample_size <- nrow(listings_for2)
+plot(cooksd, pch="*", cex=2, main="Influential Obs by Cooks distance")  # plot cook's distance
+abline(h = 4/sample_size, col="red")  # add cutoff line
+
+influential <- as.numeric(names(cooksd)[(cooksd > (4/sample_size))])
+listings_for2_screen <- listings_for2[-influential, ]
+
+
+model1_1 <- lm(price_4_nights ~ prop_type_simplified + number_of_reviews + review_scores_rating,
+             data = listings_for2_screen)  #make regression on these variable 
+
+summary(model1_1)
+
+par(mfrow=c(2,2)) # Change the panel layout to 2 x 2
+plot(model1_1)
+
+bptest(model1_1)
+
+vif(model1_1)
+
+```
+The resulting equation of the regression model is the following:
+$$
+price_4_nights = 2900 - 1391 * prop_type_simplifiedHouse - 487 * prop_type_simplifiedLoft
+- 15 * prop_type_simplifiedOther - 613 * prop_type_simplifiedTownhouse + 2 * number_of_reviews
+- 7 * review_scores_rating
+$$
+
+By running the results again, we see better results. It seems the model improved on every aspect and therefore we decide that this model is better than the previous. We decided to run again the the Breusch-Pagan test to closely check upon heteroschedasticity which does not seem to be present.
+
+We now take also a closer look at variance-infaltion factors and it seems that None of of the variable experience colinearity, meaning that our coefficients are realiable.
+
+- the coefficient -6.79 for review score rating signals that when the price increases by one unit, the review score rating decreases (on average) by 6.79, probably signaling that Airbnb clients are very much "price sensitive", holding everything else constant.
+- the coefficent -1391.31 for prop_type_simplifiedHouse signals that when price increases by one unit, the number of Houses decreases (on average) by 1391
+- the coefficent -487 singals that when price increase by one unit, the number of Loft decreases 487 units more than houses
+- the coefficent -15 singals that when price increases by one unit, the number of Other property types decreases 15 units more than Houses
+- the coefficent -613 signals that when price increases by one unit, the number of Townhouse decreases 613 units more compared to Houses
+
+In conclusion we also notice that in the second model (adjusted for influential outliers), the $R_{adjusted}^2$ is higher, at 3.8%, and the F-test still revelas that this model fits the data better than the intercept-only model.
+
+In model1_1, at 5% significance level, The only significant predictors here are prop_type_simplifiedHouse, number_of_reviews and prop_type_simplifiedTownhouse.
+
+
+### 3.3.2 Regression Analysis 2
+#### Property Type, Number of Reviews, Review Score, and Room Type
+
+Looking to improve the model, we will add the predictor "room_type" to the model. 
+
+```{r model2, eval=TRUE, warning=FALSE}
+
+model2 <- lm(price_4_nights ~ prop_type_simplified + number_of_reviews + review_scores_rating + room_type, data = listings_for2)  #make regression on these variable and call model 2
+
+summary(model2) #summary model 2
+ 
+par(mfrow=c(2,2)) # Change the panel layout to 2 x 2
+plot(model2)
+
+bptest(model2)
+
+vif(model2)
+
+```
+
+The resulting equation of the regression model is the following: CHANGE
+$$
+price_4_nights = 2890 - 1390 * prop_type_simplifiedCondominium -484 * prop_type_simplifiedHouse
+- 65 * prop_type_simplifiedOther - 619 * prop_type_simplifiedServiced apartment + 2 * number_of_reviews
+- 6 * review_scores_rating + 346* room_typeHotel room + 63 * room_typePrivate room - 493 room_typeShared room 
+$$
+```{r model1_1, eval=TRUE, warning=FALSE}
+
+cooksd <- cooks.distance(model2)
+sample_size <- nrow(listings_for2)
+plot(cooksd, pch="*", cex=2, main="Influential Obs by Cooks distance")  # plot cook's distance
+abline(h = 4/sample_size, col="red")  # add cutoff line
+
+influential <- as.numeric(names(cooksd)[(cooksd > (4/sample_size))])
+listings_for2_screen <- listings_for2[-influential, ]
+
+
+model2_1 <- lm(price_4_nights ~ prop_type_simplified + number_of_reviews + review_scores_rating + room_type, data = listings_for2_screen)  #make regression on these variable 
+
+summary(model2_1)
+
+par(mfrow=c(2,2)) # Change the panel layout to 2 x 2
+plot(model2_1)
+
+bptest(model2_1)
+
+vif(model2_1)
+
+```
+
+Even when influential outliers are removed, qdding room type has not been very helpful in explaining more of the variation of the price. Thi variable therefore should be kept out of your regressions; indeed, adding this variable, only uses up valuable degrees of freedom and this, in turn, This reduces the precision (i.e., increases the standard errors) of the estimates of all the valid predictor variables.
+We therefore deem that a better model is Model1_1
+
+
+
+### 3.3.3 Regression Analysis 3
+#### Bathrooms, Bedrooms, Beds, Accommodates
+
+```{r model3, eval=TRUE, warning=FALSE}
+
+model3 <- lm(price_4_nights ~ bathrooms + bedrooms + beds + accommodates, data = listings_for2)  #make regression on these variable and call model 3
+
+summary(model3)
+
+par(mfrow=c(2,2)) # Change the panel layout to 2 x 2
+plot(model3)
+
+bptest(model3)
+vif(model3)
+
+```
+Looking at the 4 graphs, we quicky notice that a number of assumptionsa are violated. First, it seems that errors are non linera. This error should not occur as soon as an intercept is the model. In fact, it might be cause by some outliers which also seem to affet all other graphs. We try to remove influential outliers to see whether assumption are met after the change.
+
+
+
+```{r model3_1, eval=TRUE, warning=FALSE}
+
+cooksd <- cooks.distance(model3)
+sample_size <- nrow(listings_for2)
+plot(cooksd, pch="*", cex=2, main="Influential Obs by Cooks distance")  # plot cook's distance
+abline(h = 4/sample_size, col="red")  # add cutoff line
+
+influential <- as.numeric(names(cooksd)[(cooksd > (4/sample_size))])
+listings_for2_screen <- listings_for2[-influential, ]
+
+
+model3_1 <- lm(price_4_nights ~ bathrooms + bedrooms + beds + accommodates, data = listings_for2_screen)  #make regression on these variable and call model 3_1
+
+summary(model3_1)
+
+par(mfrow=c(2,2)) # Change the panel layout to 2 x 2
+plot(model3_1)
+
+bptest(model3_1)
+
+vif(model3_1)
+
+```
+
+The change was very helpful in improving our analysis. The scale-location graph provided reasons to believe that the residuals are heteroskedastic but since the null hypothesis is homoskedasticity in the BP test, and we got a p-value < 2.2e-16 we cannot reject the null hypothesis. While beds and accomodates are not significant predictors, we decide to keep then since the stadard deviation seems pretty low. We will return to the issue later if needed.
+
+
+### 3.3.4 Regression Analysis 4
+#### Superhost
+
+We run another regression to assess whether being a superhost command a price premium after controlling for other variables. We start with the model in 2 and 3 and add the variable host_is_superhost. We remove the variable room_type.
+
+```{r superhost_premium, eval=TRUE, warning=FALSE}
+
+modelSuperhost <- lm(price_4_nights ~ prop_type_simplified + number_of_reviews + review_scores_rating + bathrooms + bedrooms + beds + accommodates + host_is_superhost, data = listings_for2)  
+summary(modelSuperhost)
+
+par(mfrow=c(2,2)) # Change the panel layout to 2 x 2
+plot(modelSuperhost)
+
+
+vif(modelSuperhost)
+
+```
+We remove influential outliers as suggested by the Redisual vs leverage graph
+
+```{r modelSuperhost1, eval=TRUE, warning=FALSE}
+
+cooksd <- cooks.distance(modelSuperhost)
+sample_size <- nrow(listings_for2)
+plot(cooksd, pch="*", cex=2, main="Influential Obs by Cooks distance")  # plot cook's distance
+abline(h = 4/sample_size, col="red")  # add cutoff line
+
+influential <- as.numeric(names(cooksd)[(cooksd > (4/sample_size))])
+listings_for2_screen <- listings_for2[-influential, ]
+
+
+modelSuperhost1 <- lm(price_4_nights ~ prop_type_simplified + number_of_reviews + review_scores_rating + bathrooms + bedrooms + beds + accommodates + host_is_superhost, data = listings_for2_screen)   #make regression on these variable and call model 3
+
+summary(modelSuperhost1)
+
+par(mfrow=c(2,2)) # Change the panel layout to 2 x 2
+plot(modelSuperhost1)
+
+bptest(modelSuperhost1)
+
+vif(modelSuperhost1)
+
+```
+The resulting equation of the regression model is the following:
+
+$$
+price_4_nights = 3542 - 96 * prop_type_simplifiedHouse - 169 * prop_type_simplifiedLoft
++ 44 * prop_type_simplifiedOther - 25 * prop_type_simplifiedServiced apartment + 1 * number_of_reviews
+- 4 * review_scores_rating - 369 * room_typeHotel room - 361 * room_typePrivate room - 328 * bathrooms - 361 * bedrooms + 7 * beds - 5 * accommodates + 139 * host_is_superhostTRUE
+$$
+This model has an $R_{adjusted}^2$ of 10.9%, meaning that the variables explain 10.96% of the variation in prices. This model explains more variation in prices than the other models do. Furthermore, there is no colinearity, meaning that the coefficients are reliable.
+
+The variable "host_is_superhost" has a positive coefficient, reflecting that superhosts demands a premium of 139SEK on the price on average when controlling for all other variables.
+
+While the model has more explanatory power compared to the previous ones, we decide we can improve it further. We decide to remove the variables beds and accomodates for 2 reasons: 1) they are not significant in the regression 2) they have the highest variance-inflation factor. Indeed, while a valuue of 3 is not extremely high, being the coefficient of the regression not significant, we opted to remove them. 
+We also try to remove the variable prop_type_simplified. While this variable was significant in the first regression, adding more independent variables it became not significant. We think it could be a wise choice to remove it aslo because of its high standard error. We create a new model, with less explanatory variables. Cutting off variables from a regression is sometimes necessary as a good regression model never incluedes too many variables
+
+```{r modelSuperhost1, eval=TRUE, warning=FALSE}
+
+modelSuperhost2 <- lm(price_4_nights ~ number_of_reviews + review_scores_rating + bathrooms + bedrooms + host_is_superhost, data = listings_for2_screen)   #make regression on these variable and call model 3
+
+summary(modelSuperhost2)
+
+par(mfrow=c(2,2)) # Change the panel layout to 2 x 2
+plot(modelSuperhost2)
+
+bptest(modelSuperhost2)
+
+vif(modelSuperhost2)
+
+```
+
+The effect of removing the variables is pretty good. the $R_^2$ did not improve, but in this case this is not a bad signal. In fact, this metric tends to increase whenever explanatory variables are added. In this case, by removing 3 variables only a small decrease in the figure occured, with the $R_{adjusted}^2$ being at the same level. It seems that now the model is relatively explaining a greater portion of the variability of y and therefore it might have been a good choice to remove those variables.
+
+### 3.3.5 Regression Analysis 5
+#### Exact Location
+
+```{r location, eval=TRUE, warning=FALSE}
+
+modelLocation <- lm(price_4_nights ~ number_of_reviews + review_scores_rating + bathrooms + bedrooms + host_is_superhost + is_location_exact, data = listings_for2)
+
+summary(modelLocation)
+
+par(mfrow=c(2,2)) # Change the panel layout to 2 x 2
+plot(modelLocation)
+
+
+vif(modelLocation)
+
+```
+Again, we have to adjust for influential outliers 
+
+```{r modelLocation, eval=TRUE, warning=FALSE}
+
+cooksd <- cooks.distance(modelLocation)
+sample_size <- nrow(listings_for2)
+plot(cooksd, pch="*", cex=2, main="Influential Obs by Cooks distance")  # plot cook's distance
+abline(h = 4/sample_size, col="red")  # add cutoff line
+
+influential <- as.numeric(names(cooksd)[(cooksd > (4/sample_size))])
+listings_for2_screen <- listings_for2[-influential, ]
+
+
+modelLocation_1 <- lm(price_4_nights ~ number_of_reviews + review_scores_rating + bathrooms + bedrooms + host_is_superhost + is_location_exact, data = listings_for2_screen) 
+
+summary(modelLocation_1)
+
+par(mfrow=c(2,2)) # Change the panel layout to 2 x 2
+plot(modelLocation_1)
+
+bptest(modelLocation_1)
+
+vif(modelLocation_1)
+
+```
+
+
+The resulting equation of the regression model is the following:
+$$
+price_4_nights = 3655 + 1 * number_of_reviews
+- 5 * review_scores_rating - 367 * bathrooms - 423 * bedrooms 
++ 202 * host_is_superhostTrue – 38 * is_location_exactTRUE
+$$
+
+The new model introduces is_location_exact into the model, and uses is_location_exactFalse as the base level, and the coefficient of the location information provided can be stated as:
+
+* On average, an airbnb with exact location will have a lower price of 38 than one without.
+
+The addition of the location variable to the model is significant as the p-value is around 52%. Nonetheles, none of of the variable experience colinearity, meaning that or coefficients are realiable.
+
+The mode $R_{adjusted}^2$ is 11.4%. As we desire to maintain the simplest model explaining the most variance, we will remove the "is location exact" variable from the model as it does not have a particularly high significance in terms of $R_{adjusted}^2$ as well.
+
+### 3.3.6 Regression Analysis 6
+#### Cancellation policy
+
+```{r cancellation policy, eval=TRUE, warning=FALSE}
+
+modelCancellation <- lm(price_4_nights ~ number_of_reviews + review_scores_rating + bathrooms + bedrooms + host_is_superhost + cancellation_policy, data = listings_for2)
+
+summary(modelCancellation)
+
+par(mfrow=c(2,2)) # Change the panel layout to 2 x 2
+plot(modelCancellation)
+
+bptest(modelCancellation)
+
+vif(modelCancellation)
+
+```
+We want  to remove influential outliers:
+
+
+```{r modelCacellation, eval=TRUE, warning=FALSE}
+
+cooksd <- cooks.distance(modelCancellation)
+sample_size <- nrow(listings_for2)
+plot(cooksd, pch="*", cex=2, main="Influential Obs by Cooks distance")  # plot cook's distance
+abline(h = 4/sample_size, col="red")  # add cutoff line
+
+influential <- as.numeric(names(cooksd)[(cooksd > (4/sample_size))])
+listings_for2_screen <- listings_for2[-influential, ]
+
+
+modelCancellation_1 <- lm(price_4_nights ~ number_of_reviews + review_scores_rating + bathrooms + bedrooms + host_is_superhost + cancellation_policy, data = listings_for2_screen)
+
+summary(modelCancellation_1)
+
+par(mfrow=c(2,2)) # Change the panel layout to 2 x 2
+plot(modelCancellation_1)
+
+bptest(modelCancellation_1)
+
+vif(modelCancellation_1)
+
+```
+
+
+The resulting equation is the following:
+$$
+log_price_4_nights = 3457 + 1 * number_of_reviews
+- 4 * review_scores_rating - 335 * bathrooms - 432 * bedrooms
++ 206  host_is_superhostTrue + 24 * cancellation_policymoderate + 119 * cancellation_policystrict_14_with_grace_period
+$$
+
+The new model introduces cancellation policy into the model, and uses cancellation_policyflexible as the base level, and the coefficient of the cancellation policy can be stated as:
+
+* On average, a property with moderate cancellation policy will have a higher price of 24 than one with flexible policy.
+* On average, a property with strict_14_with_grace_period cancellation policy will have a higher price of 119 than one with flexible policy.
+
+When adding the cancelation variable, the variable is not statistically significant. Because of this, we will not include the cancelation variable in the model.
+MOreover, None of of the variable experience colinearity, meaning that or coefficients are realiable.
+
+### 3.3.7 Regression Analysis 7
+#### Central location
+
+```{r}
+
+listings_for2_1 <- listings_for2 %>% #create new dataset
+  mutate(region = case_when(
+    neighbourhood %in% c("Kungsholmen", "Norrmalm", "Östermalm", "Södermalm") ~ "Central",
+    neighbourhood %in% c("Älvsjö", "Bromma", "Enskede-Årsta-Vantör", "Farsta", "Hässelby-Vällingby", "Rinkeby-Kista", "Skärholmen", "Skarpnäck", "Spånga-Tensta", "Hägersten-Liljeholmen") ~ "Not Central"),
+    region = case_when(is.na(region) ~ "Not Central",
+                       TRUE ~ region))  #add new column that indicate whether property is central/non central, there are 5 NAs which are (we viewed them on the map before changing the code) all not central
+
+modelregion <- lm(price_4_nights ~ number_of_reviews + review_scores_rating + bathrooms + bedrooms + host_is_superhost + region, data = listings_for2_1) #make regression on these variable and call model region
+
+summary(modelregion)
+
+par(mfrow=c(2,2)) # Change the panel layout to 2 x 2
+plot(modelregion)
+
+
+vif(modelregion)
+
+#show map of central
+
+central <- c("Central", "Not Central")
+
+pal2 <- colorFactor(c("blue1","red"), c("Central", "Not Central"))
+
+leaflet(data = filter(listings_for2_1, minimum_nights <= 4)) %>% #create map
+  addProviderTiles("Esri.WorldStreetMap") %>% #add maptype
+  addCircleMarkers(lng = ~longitude, 
+                   lat = ~latitude, 
+                   radius = 1, 
+                   color = ~pal2(region),
+                   fillOpacity = 0.4, 
+                   popup = ~listing_url,
+                   label = ~neighbourhood) %>% 
+  addLegend("bottomright", pal = pal2, values = ~region,
+    title = "Location",
+    opacity = 1
+  ) #definitions of the map
+
+```
+
+In our last model, we classified neighbourhood into central and non central. We use region Central as the base level. The different two different locations in the city can be viewed on the map. 
+
+in this model as weel we adjust for influential outliers
+
+
+```{r modelregion, eval=TRUE, warning=FALSE}
+
+cooksd <- cooks.distance(modelregion)
+sample_size <- nrow(listings_for2_1)
+plot(cooksd, pch="*", cex=2, main="Influential Obs by Cooks distance")  # plot cook's distance
+abline(h = 4/sample_size, col="red")  # add cutoff line
+
+influential <- as.numeric(names(cooksd)[(cooksd > (4/sample_size))])
+listings_for2_screen_1 <- listings_for2_1[-influential, ]
+
+modelregion_1 <- lm(price_4_nights ~ number_of_reviews + review_scores_rating + bathrooms + bedrooms + host_is_superhost  + region, data = listings_for2_screen_1)
+
+summary(modelregion_1)
+
+par(mfrow=c(2,2)) # Change the panel layout to 2 x 2
+plot(modelregion_1)
+
+bptest(modelregion_1)
+
+vif(modelregion_1)
+
+
+```
+The resuls signals that: 
+
+* Non central properties are on average more expensive than central properties 207.
+* The introduction of new varible resulting in an improved model with a $R_{adjusted}^2$ of 12%
+
+## 3.4 Summary Table and Predicted Cost
+
+```{r, summary, warning=FALSE}
+
+huxreg('Model 1' = model1_1, 
+       'Model 2' = model2_1,  
+       'Model 3_1' = model3_1,  
+       'Model Superhost' = modelSuperhost2,
+       "Model Location" = modelLocation_1,
+       'Model Region' = modelregion_1,
+       # number_format = "%.2f",
+       statistics = c('# observations' = 'nobs', 'R squared' = 'r.squared', 'Adj. R Squared' = 'adj.r.squared', 'Residual SE' = 'sigma'), 
+      bold_signif = 0.05, 
+       stars = NULL
+       ) %>%  #create a table
+  theme_article() %>% #add a theme
+  set_caption('Summary table of models showing adjusted R^2, and the Residual S.E.')  #add a title
+
+
+#Assume the apartment has 15 reviews, 80 reviews scores rating, two bathrooms, four bedrooms, superhost and non-central location
+Predicted_cost <- (3418 + 15 * 1.5 + 80 * -3.89 + 2 * -364 +4 * -440 + 151.94 +207.9)
+                   
+print(Predicted_cost) #show the price
+
+#95% interval
+SE_residual <- 1390.484 
+upper_interval <- Predicted_cost + 2*SE_residual #calculate the upper interval
+lower_interval <- Predicted_cost - 2*SE_residual #calculate the lower interval
+
+specify_decimal <- function(x, k) trimws(format(round(x, k), nsmall=k)) #decimal for the intervals
+
+paste("Upper interval is $", specify_decimal(upper_interval,2), ",lower interval is $", specify_decimal(lower_interval,2))  #paste text
+
+```
+
+# Details
+
+- Who did you collaborate with: (All team 6 members) Martina Schipani, Vincenz Mautner-Markhof, Sophie Lin, Ansh Chhabra, Carson Yiding Liu, Pingchuan Tian

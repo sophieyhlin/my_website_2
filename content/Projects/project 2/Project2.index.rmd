@@ -1,0 +1,88 @@
+---
+title: "Trump Approval Ratings"
+author: "Y.L"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    theme: flatly
+    highlight: zenburn
+    number_sections: yes
+    toc: yes
+    toc_float: yes
+    code_folding: show
+---
+
+
+```{r, setup, include=FALSE}
+knitr::opts_chunk$set(
+  message = FALSE, 
+  warning = FALSE, 
+  tidy=FALSE,     # display code as typed
+  size="small")   # slightly smaller font for code
+options(digits = 3)
+
+# default figure size
+knitr::opts_chunk$set(
+  fig.width=6.75, 
+  fig.height=6.75,
+  fig.align = "center"
+)
+```
+
+
+```{r load-libraries, include=FALSE}
+library(tidyverse)  # Load ggplot2, dplyr, and all the other tidyverse packages
+library(mosaic)
+library(ggthemes)
+library(lubridate)
+library(here)
+library(skimr)
+library(janitor)
+library(httr)
+library(readxl)
+library(vroom)
+library(Rmisc)
+```
+
+
+# Trump's Approval Margins
+
+As we saw in class, fivethirtyeight.com has detailed data on [all polls that track the president's approval ](https://projects.fivethirtyeight.com/trump-approval-ratings)
+
+```{r, cache=TRUE}
+approval_polllist <- read_csv(here::here('data', 'approval_polllist.csv'))
+
+approval_polllist$enddate <- mdy(approval_polllist$enddate)
+glimpse(approval_polllist)
+
+```
+
+## Create a plot
+
+What I would like you to do is to calculate the average net approval rate (approve- disapprove) for each week since he got into office. I want you plot the net approval, along with its 95% confidence interval. There are various dates given for each poll, please use `enddate`, i.e., the date the poll ended.
+
+
+```{r}
+approval_polllist$week_number <- week(approval_polllist$enddate)
+approval_polllist$net_approve <- approval_polllist$approve - approval_polllist$disapprove
+approval_polllist_summary <- summarySE(approval_polllist, measurevar="net_approve", groupvars="week_number")
+ggplot(approval_polllist_summary, aes(x=week_number, y=net_approve)) + geom_bar(position=position_dodge(), stat = "identity") + geom_errorbar(aes(ymin=net_approve-ci, ymax=net_approve+ci), width=.2, position=position_dodge(.9))
+```
+
+You can facet by year, and add an orange line at zero. Your plot should look like this:
+
+```{r trump_margins, echo=FALSE, out.width="100%"}
+knitr::include_graphics(here::here("images", "trump_approval_margin.png"), error = FALSE)
+```
+
+## Compare Confidence Intervals
+
+Compare the confidence intervals for `week 15` (6-12 April 2020) and `week 34` (17-23 August 2020). Can you explain what's going on? One paragraph would be enough.
+
+```{r}
+week_15_vs_week_34 <- approval_polllist %>% filter(week_number==15|week_number==34) 
+glimpse(week_15_vs_week_34)
+summarySE(week_15_vs_week_34, measurevar="net_approve", groupvars="week_number")
+```
+According to the data frame, the net approval went from -8.82 to -13.15 from week 15 to week 34, signifying that there has been a significant rise on disapproval on Trump administration. The declining net approval rate in week 34 can be linked to a series of social events and controversial Trump policies on covid, including authorising Plasma treatment amid attacks on FDA, uncontrollable California wildfire, the Louisiana shooting - another police killing of Black man which sparked local outrage and rising protests. 
+

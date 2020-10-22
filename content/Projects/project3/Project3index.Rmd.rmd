@@ -1,0 +1,210 @@
+---
+title: "Omega Group plc- Pay Discrimination"
+author: "YH L"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    theme: flatly
+    highlight: zenburn
+    number_sections: yes
+    toc: yes
+    toc_float: yes
+    code_folding: show
+---
+
+
+```{r, setup, echo=FALSE}
+knitr::opts_chunk$set(
+  message = FALSE, 
+  warning = FALSE, 
+  tidy=FALSE,     # display code as typed
+  size="small")   # slightly smaller font for code
+options(digits = 3)
+
+# default figure size
+knitr::opts_chunk$set(
+  fig.width=6.75, 
+  fig.height=6.75,
+  fig.align = "center"
+)
+```
+
+
+```{r load-libraries, echo=FALSE}
+library(tidyverse)  # Load ggplot2, dplyr, and all the other tidyverse packages
+library(mosaic)
+library(ggthemes)
+library(GGally)
+library(readxl)
+library(here)
+library(skimr)
+library(janitor)
+library(broom)
+library(tidyquant)
+library(infer)
+library(openintro)
+library(tidyquant)
+```
+
+
+# Omega Group plc- Pay Discrimination
+
+
+At the last board meeting of Omega Group Plc., the headquarters of a large multinational company, the issue was raised that women were being discriminated in the company, in the sense that the salaries were not the same for male and female executives. A quick analysis of a sample of 50 employees (of which 24 men and 26 women) revealed that the average salary for men was about 8,700 higher than for women. This seemed like a considerable difference, so it was decided that a further analysis of the company salaries was warranted. 
+
+You are asked to carry out the analysis. The objective is to find out whether there is indeed a significant difference between the salaries of men and women, and whether the difference is due to discrimination or whether it is based on another, possibly valid, determining factor. 
+
+## Loading the data
+```{r load_omega_data}
+omega <- read_csv(here::here("data", "omega.csv"))
+glimpse(omega) # examine the data frame
+```
+
+## Relationship Salary - Gender ?
+The data frame `omega`  contains the salaries for the sample of 50 executives in the company. Can you conclude that there is a significant difference between the salaries of the male and female executives?
+
+Note that you can perform different types of analyses, and check whether they all lead to the same conclusion 
+
+.	Confidence intervals
+.	Hypothesis testing
+.	Correlation analysis
+.	Regression
+
+Calculate summary statistics on salary by gender. Also, create and print a dataframe where, for each gender, you show the mean, SD, sample size, the t-critical, the SE, the margin of error, and the low/high endpoints of a 95% condifence interval
+
+```{r, confint_single_valiables}
+mosaic::favstats (salary ~ gender, data=omega)
+two_row_data <- mosaic::favstats (salary ~ gender, data= omega) %>% 
+select(gender, mean, sd, n) 
+
+two_row_data2 <- two_row_data %>% 
+  mutate(SE = sd/sqrt(n),
+         t_critical = qt(0.975, n-1),
+         margin_error = t_critical * SE,
+         
+low_95_ci = mean - margin_error,
+         high_95_ci = mean + margin_error)
+
+two_row_data2
+
+```
+> What can you conclude from your analysis? A couple of sentences would be enough
+
+According to the data frame, the mean salary of female employees is 64,543 and the mean salary for the male employees is 73,239. Through the t_critical we realise that the 95% confidence interval away from the mean is roughly 2 for both male and female employees. (female: 2.06, male:2.07) Moreover, the standard error for female is 1,484 and 1,523 for male employees; 95 % interval for men ranges from 70,088 to 76,390 whilst 61,486 to 67,599 for female. 
+
+You can also run a hypothesis testing, assuming as a null hypothesis that the mean difference in salaries is zero, or that, on average, men and women make the same amount of money. You should tun your hypothesis testing using `t.test()` and with the simulation method from the `infer` package.
+
+```{r, hypothesis_testing}
+data_men <- omega %>%                         
+  filter(gender == "male") %>%                
+  select(salary)                               
+
+data_men <- as.data.frame(data_men)         
+
+data_women <- omega %>%                       
+  filter(gender == "female") %>%              
+  select(salary)                              
+
+data_women <- as.data.frame(data_women)       
+
+t.test(data_men, data_women, "two.sided", var.equal = FALSE)     
+```
+
+```{r, hypothesis_testing_1}
+set.seed(203)
+infer_gender <- omega %>%    #create new datafile
+  filter(gender == "male" | gender == "female") %>%     #filter for male and female
+  specify(salary ~ gender) %>%        #define salary depending on gender?
+  hypothesize( null = "independence") %>%   #create hypothesis
+  generate(reps = 1000, type = "bootstrap") %>%     #generate a bunch of bootstrap samples
+  calculate(stat = "diff in means", order = c("male", "female"))    #calculate the differences
+```
+
+```{r}
+infer_gender
+```
+
+```{r}
+ggplot(infer_gender, aes(x=stat)) +   #plot the distribution
+  geom_histogram()
+```
+
+```{r}
+print(p_value(infer_gender, 0, direction = 'both'))     #show p_value
+```
+
+```{r}
+observed_difference <- omega %>%        #create new dataset
+  select(gender, salary) %>%            #select only gender and salary
+  specify(salary ~ gender) %>%          #salary on gender
+  calculate(stat = "diff in means", order = c("male", "female"))  #calculation of difference in means
+
+salary <- omega %>%                     #create new dataset
+  specify(salary ~ gender) %>%          #salary on gender
+  hypothesize(null = "independence") %>%  #H0 = independence of salary on gender
+  generate(reps = 1000, type = "permute") %>%   #make 1000 permutes
+  calculate(stat = "diff in means", order = c("male", "female"))    #calculation of difference in means
+
+salary %>% 
+  visualize(obs_stat = observed_difference, direction = "both")     #visualize in normal distribution plot
+```
+
+> What can you conclude from your analysis? A couple of sentences would be enough
+
+According to the plot, we can conclude that the average salary salary between the male and female employees differs significantly as the p-value is below 5% whilst t-value is higher than 2. By adopting the infer package,the p-value will be 0 under both boot-straping and permute method. On the other note, we can also see from the plot of permute method that the difference in salaries lies on the red line (normal distribution line), explaning that it's out of the main distribution without any intersection. In summary, gender seems to be the key factor that disterming salary. 
+
+## Relationship Experience - Gender?
+
+At the board meeting, someone raised the issue that there was indeed a substantial difference between male and female salaries, but that this was attributable to other reasons such as differences in experience. A questionnaire send out to the 50 executives in the sample reveals that the average experience of the men is approximately 21 years, whereas the women only have about 7 years experience on average (see table below).
+
+```{r, experience_stats}
+# Summary Statistics of salary by gender
+favstats (experience ~ gender, data=omega)
+```
+```{r}
+# hypothesis testing using t.test() 
+
+data_men2 <- omega %>%                      #create new dataset
+  filter(gender == "male") %>%              #filter for only male data
+  select(experience)                        #select only column "experience"
+
+data_men2 <- as.data.frame(data_men2)       #make the dataset a dataframe
+
+data_women2 <- omega %>%                    #create a new dataset
+  filter(gender == "female") %>%            #filter for only female data
+  select(experience)                        #select only column "experience"
+
+data_women2 <- as.data.frame(data_women2)   #make the dataset a dataframe
+
+t.test(data_men2, data_women2, "two.sided", var.equal = FALSE)     #perform the t-test
+```
+
+Based on this evidence, can you conclude that there is a significant difference between the experience of the male and female executives? Perform similar analyses as in the previous section. Does your conclusion validate or endanger your conclusion about the difference in male and female salaries? 
+
+## Relationship Salary - Experience ?
+
+Someone at the meeting argues that clearly, a more thorough analysis of the relationship between salary and experience is required before any conclusion can be drawn about whether there is any gender-based salary discrimination in the company.
+
+```{r}
+ggplot(omega, aes(x = experience, y = salary)) +          #create a ggplot
+  geom_point() +                                          #plot type = scatterplot
+  geom_smooth(method = "lm") +                            #put a regressionline
+  theme_bw() +                                            #background of plot = white
+  labs(title = "Relation of Experience and Salary", x = "Experience", y = "Salary")     #add title and name of x and y
+```
+
+## Check correlations between the data
+You can use `GGally:ggpairs()` to create a scatterplot and correlation matrix. Essentially, we change the order our variables will appear in and have the dependent variable (Y), salary, as last in our list. We then pipe the dataframe to `ggpairs()` with `aes` arguments to colour by `gender` and make ths plots somewhat transparent (`alpha  = 0.3`)
+
+```{r, ggpairs}
+omega %>% 
+  select(gender, experience, salary) %>% #order variables they will appear in ggpairs()
+  ggpairs(aes(colour=gender, alpha = 0.3))+
+  theme_bw()
+```
+
+> Look at the salary vs experience scatterplot. What can you infer from this plot? Explain in a couple of sentences
+
+According to the plots, evidently, the salary has a positive correlation with years of experiences and gender. In general, male employees earned more averagely than female employees; and more experiences also lead to higher salaries comparing with the employees with less experiences. 
+
+Nonetheless, the correlation can also leads to another explanation - that the men in this data set generally have more work experiences than women, which is demonstrated by the top middle plot. According to the mid-bottom plot, it clearly shows that ultimately, more experiences leads to higher salary and the men in this data set tend to have richer work experiences than women from the data in general.It could also potentially explains that men in the majority of the senior employees in this company is men. Therefore, confidently, we can assume that experience is more of a determining factor than gender overall. 
